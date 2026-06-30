@@ -14,10 +14,9 @@ layers:
   - auto_size: false
     canvas_id: cffe2d4c-b35e-4e32-9721-d4733d48f1ea
     compute_settings: null
-    description: Generates a publication-ready visual mapping report table showing
-      JSON-to-SQL field matches with confidence scores, ambiguity flags, and reasoning.
-      Separates auto-approved mappings from pending items requiring human review,
-      and exports the final field_map dict for downstream transformation blocks.
+    description: Generates a styled visual report table showing AI schema mappings
+      between JSON fields and SQL columns, with confidence levels, ambiguity flags,
+      and analyst review status for approval or pending decisions.
     height: 1000
     id: 1c313b68-6d44-4bb3-b55b-39f5a1cd5c14
     layer_id: 62cf3596-9211-45ab-a9d7-24f47ad649ba
@@ -33,28 +32,28 @@ layers:
   - auto_size: false
     canvas_id: cffe2d4c-b35e-4e32-9721-d4733d48f1ea
     compute_settings: null
-    description: Ingests vendor loan JSON data and maps it against target SQL schema
-      with validation rules. Displays field inventory from incoming payload and defines
-      the database structure for storing loan attributes (ID, borrower, balance, rate,
-      status, dates, state, servicer, credit score).
+    description: Loads loan records from SQLite database for a specified date range,
+      inventories vendor JSON fields, and defines the target SQL schema with business
+      validation rules (credit score, interest rate, UPB, loan status, state codes).
     height: 1000
     id: 4feca06f-9d6c-4e9d-88b7-7b936dfd7ac5
     layer_id: 62cf3596-9211-45ab-a9d7-24f47ad649ba
     name: "1. Data Ingestion \u2014 Vendor JSON & SQL Schema"
     parent_id: null
     properties: {}
-    status: 1
+    status: 3
     type: 1
     variables: null
     width: 1600
-    x: 0
-    y: 0
+    x: 2000
+    y: 3000
   - auto_size: false
     canvas_id: cffe2d4c-b35e-4e32-9721-d4733d48f1ea
     compute_settings: null
-    description: Automatically maps vendor JSON fields to SQL database columns using
-      semantic synonym matching, token similarity scoring, and type compatibility
-      signals. Flags ambiguous or low-confidence mappings for analyst review.
+    description: Automatically maps vendor JSON field names to standard SQL schema
+      columns using semantic synonym lookup and token similarity scoring. Assigns
+      confidence levels and flags ambiguous mappings for analyst review. Outputs a
+      detailed mapping report with 10 high-confidence matches ready for ETL transformation.
     height: 1000
     id: 6994dbd5-81a9-487e-b178-2338e3ebfa4d
     layer_id: 62cf3596-9211-45ab-a9d7-24f47ad649ba
@@ -70,11 +69,11 @@ layers:
   - auto_size: false
     canvas_id: cffe2d4c-b35e-4e32-9721-d4733d48f1ea
     compute_settings: null
-    description: 'Transforms vendor loan records using field mappings and performs
-      comprehensive validation: applies type conversions (numeric parsing, date standardization,
-      percent-to-decimal), checks for missing required fields and duplicates, validates
-      business rules (FICO/rate ranges, positive balances), and outputs a SQL-ready
-      DataFrame with detailed quality metrics and issues log.'
+    description: Validates, cleanses, and transforms raw vendor loan records into
+      SQL-ready dataset. Applies field-level parsing (numeric, dates, percentages),
+      enforces business rules (rate ranges, FICO bounds), detects duplicates, and
+      flags missing/invalid data. Generates quality metrics and detailed issue logs
+      by field/date.
     height: 1000
     id: 85bd8aa8-5058-4713-a90b-68f2be29a741
     layer_id: 62cf3596-9211-45ab-a9d7-24f47ad649ba
@@ -90,9 +89,28 @@ layers:
   - auto_size: false
     canvas_id: cffe2d4c-b35e-4e32-9721-d4733d48f1ea
     compute_settings: null
-    description: Generates a comprehensive data quality scorecard with an overall
-      DQ score gauge, metric breakdown charts, and issues log, plus renders the clean
-      SQL-ready dataset as a formatted table for audit and validation purposes.
+    description: Constructs a structured JSON context from data quality results and
+      issue logs, aggregating issue counts by type/field, extracting sample issues,
+      and documenting automated validation actions for downstream AI analysis.
+    height: 1000
+    id: 8e305029-4b0c-4524-87d1-a4276e4d816d
+    layer_id: 62cf3596-9211-45ab-a9d7-24f47ad649ba
+    name: 6. AI Executive Insights
+    parent_id: null
+    properties: {}
+    status: 3
+    type: 1
+    variables: null
+    width: 1600
+    x: 10000
+    y: 0
+  - auto_size: false
+    canvas_id: cffe2d4c-b35e-4e32-9721-d4733d48f1ea
+    compute_settings: null
+    description: Generates an executive data quality dashboard with KPI cards, DQ
+      score gauge, issue distribution charts, validation trends, a detailed issues
+      log table, and a SQL-ready dataset preview with formatted columns and schema
+      metadata.
     height: 1000
     id: 911bb2e6-2a9a-484d-972f-e588e3a3aa29
     layer_id: 62cf3596-9211-45ab-a9d7-24f47ad649ba
@@ -105,6 +123,43 @@ layers:
     width: 1600
     x: 8000
     y: 0
+  - auto_size: false
+    canvas_id: cffe2d4c-b35e-4e32-9721-d4733d48f1ea
+    compute_settings: null
+    description: Generates a formatted executive data quality briefing report that
+      summarizes validation results, highlights critical issues, quantifies analyst
+      effort savings, and provides vendor improvement recommendations with readiness
+      verdict for downstream reporting.
+    height: 1000
+    id: bc93d3b1-ee97-4469-9847-0dbc735574e0
+    layer_id: 62cf3596-9211-45ab-a9d7-24f47ad649ba
+    name: 7. Executive Insights Narrative
+    parent_id: null
+    properties: {}
+    status: 3
+    type: 1
+    variables: null
+    width: 1600
+    x: 12000
+    y: 0
+  - auto_size: false
+    canvas_id: cffe2d4c-b35e-4e32-9721-d4733d48f1ea
+    compute_settings: null
+    description: Creates a loan portfolio SQLite database with 200+ realistic records,
+      intentionally injected with 40 data quality defects (duplicates, missing values,
+      malformed dates/rates, invalid codes) for testing validation workflows.
+    height: 1000
+    id: fbe6b821-755f-4dfd-91ac-2f3e33dffc62
+    layer_id: 62cf3596-9211-45ab-a9d7-24f47ad649ba
+    name: 0. Seed Loan Portfolio Database
+    parent_id: null
+    properties: {}
+    status: 3
+    type: 1
+    variables: null
+    width: 1600
+    x: 0
+    y: 3000
   canvas_id: cffe2d4c-b35e-4e32-9721-d4733d48f1ea
   edges:
   - canvas_id: cffe2d4c-b35e-4e32-9721-d4733d48f1ea
@@ -113,15 +168,30 @@ layers:
     source: 6994dbd5-81a9-487e-b178-2338e3ebfa4d
     target: 1c313b68-6d44-4bb3-b55b-39f5a1cd5c14
   - canvas_id: cffe2d4c-b35e-4e32-9721-d4733d48f1ea
+    id: 4380efb9-6ff9-4ea6-b4ae-dfeaac45174a
+    layer_id: 62cf3596-9211-45ab-a9d7-24f47ad649ba
+    source: fbe6b821-755f-4dfd-91ac-2f3e33dffc62
+    target: 4feca06f-9d6c-4e9d-88b7-7b936dfd7ac5
+  - canvas_id: cffe2d4c-b35e-4e32-9721-d4733d48f1ea
     id: 60d6c6af-1634-46b8-af32-3e9fb5decc95
     layer_id: 62cf3596-9211-45ab-a9d7-24f47ad649ba
     source: 85bd8aa8-5058-4713-a90b-68f2be29a741
     target: 911bb2e6-2a9a-484d-972f-e588e3a3aa29
   - canvas_id: cffe2d4c-b35e-4e32-9721-d4733d48f1ea
+    id: b18b2e8b-6d8a-4840-a751-30e5f4b29f0c
+    layer_id: 62cf3596-9211-45ab-a9d7-24f47ad649ba
+    source: 8e305029-4b0c-4524-87d1-a4276e4d816d
+    target: bc93d3b1-ee97-4469-9847-0dbc735574e0
+  - canvas_id: cffe2d4c-b35e-4e32-9721-d4733d48f1ea
     id: dc8754cd-6f66-47b3-b6b3-a0192ac6cf3d
     layer_id: 62cf3596-9211-45ab-a9d7-24f47ad649ba
     source: 1c313b68-6d44-4bb3-b55b-39f5a1cd5c14
     target: 85bd8aa8-5058-4713-a90b-68f2be29a741
+  - canvas_id: cffe2d4c-b35e-4e32-9721-d4733d48f1ea
+    id: e1b76fb8-bbd2-4450-8058-8bef28f27eac
+    layer_id: 62cf3596-9211-45ab-a9d7-24f47ad649ba
+    source: 911bb2e6-2a9a-484d-972f-e588e3a3aa29
+    target: 8e305029-4b0c-4524-87d1-a4276e4d816d
   - canvas_id: cffe2d4c-b35e-4e32-9721-d4733d48f1ea
     id: e9acab47-0dc2-48ca-86f0-330ba3d2328d
     layer_id: 62cf3596-9211-45ab-a9d7-24f47ad649ba

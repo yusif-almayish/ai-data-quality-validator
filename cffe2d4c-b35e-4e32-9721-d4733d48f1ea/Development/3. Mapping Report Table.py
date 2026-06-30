@@ -1,138 +1,148 @@
-
-"""
-Mapping Report Table
-─────────────────────────────────────────────────────────────────────────────
-Renders the AI Mapping Report in a clean, publication-ready styled table
-and exports the approved field_map dict for use in transformation blocks.
-"""
-
 import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.colors import to_rgba
 
-# ── Build approved mapping dict (analyst would override ambiguous rows here) ──
-# For this demo all mappings are High-confidence → auto-approved.
-# A Medium/Low row would appear in the PENDING dict for human review.
-approved_map = {}    # json_field → sql_column  (auto-approved)
-pending_map  = {}    # json_field → sql_column  (needs review)
+# ── Inputs from upstream ─────────────────────────────────────────
+# ai_mapping_df inherited
 
+# ── Approve / pend mappings ──────────────────────────────────────
+approved_map = {}
+pending_map  = {}
 for _, row in ai_mapping_df.iterrows():
-    if row["SQL_COLUMN"] == "NO_MATCH":
-        pending_map[row["JSON_FIELD"]] = row["SQL_COLUMN"]
-    elif row["AMBIGUOUS"] == "YES" or row["CONFIDENCE"] in ("Low",):
-        pending_map[row["JSON_FIELD"]] = row["SQL_COLUMN"]
+    if row["Analyst Review"] == "Not required":
+        approved_map[row["JSON Field"]] = row["SQL Column"]
     else:
-        approved_map[row["JSON_FIELD"]] = row["SQL_COLUMN"]
+        pending_map[row["JSON Field"]]  = row["SQL Column"]
 
-# field_map is the final mapping used by downstream transformation
-field_map = {**approved_map}   # only auto-approved fields transform
+field_map = approved_map.copy()
 
-print("Approved field_map:")
-for k, v in field_map.items():
-    print(f"  {k:<22}  →  {v}")
+# ── Zerve palette ────────────────────────────────────────────────
+BG       = "#1D1D20"
+TEXT_PRI = "#fbfbff"
+TEXT_SEC = "#909094"
+GREEN    = "#8DE5A1"
+ORANGE   = "#FFB482"
+CORAL    = "#FF9F9B"
+LAVENDER = "#D0BBFF"
+BLUE     = "#A1C9F4"
 
-if pending_map:
-    print("\n⚠  Pending analyst review:")
-    for k, v in pending_map.items():
-        print(f"  {k:<22}  →  {v}")
+def conf_color(label):
+    return {"High": GREEN, "Medium": ORANGE, "Low": CORAL}.get(label, TEXT_SEC)
 
-# ── Visual Mapping Report table ───────────────────────────────────────────────
-BG         = "#1D1D20"
-TEXT_PRI   = "#fbfbff"
-TEXT_SEC   = "#909094"
-GREEN      = "#8DE5A1"
-ORANGE     = "#FFB482"
-CORAL      = "#FF9F9B"
-LAVENDER   = "#D0BBFF"
-BLUE       = "#A1C9F4"
+def ambig_color(is_ambig):
+    return CORAL if is_ambig else GREEN
 
-conf_color = {"High": GREEN, "Medium": ORANGE, "Low": CORAL}
-ambig_color = {"YES": CORAL, "NO": GREEN}
+# ── Build display DataFrame ──────────────────────────────────────
+display_df = ai_mapping_df[[
+    "JSON Field","SQL Column","Confidence","Confidence Label","Ambiguous","Analyst Review","Reasoning"
+]].copy()
+display_df["Confidence"] = display_df["Confidence"].apply(lambda x: f"{x:.2f}")
+display_df["Ambiguous"]  = display_df["Ambiguous"].apply(lambda x: "⚠  Yes" if x else "✓  No")
 
-display_df = ai_mapping_df[["JSON_FIELD", "SQL_COLUMN", "RAW_SCORE", "CONFIDENCE", "AMBIGUOUS", "REASONING"]].copy()
-display_df["RAW_SCORE"] = display_df["RAW_SCORE"].apply(lambda x: f"{x:.3f}")
-
-n_rows = len(display_df)
-col_widths = [1.8, 2.0, 0.9, 0.9, 0.85, 5.6]
-fig_width  = sum(col_widths) + 0.4
-fig_height = 0.55 * (n_rows + 2) + 0.6
+# ── Render table ─────────────────────────────────────────────────
+n_rows      = len(display_df)
+col_widths  = [2.4, 2.4, 1.4, 1.5, 1.4, 2.0, 5.0]
+fig_width   = sum(col_widths) + 0.4
+fig_height  = 1.0 + n_rows * 0.52 + 0.4
 
 mapping_report_fig, ax = plt.subplots(figsize=(fig_width, fig_height))
 mapping_report_fig.patch.set_facecolor(BG)
 ax.set_facecolor(BG)
 ax.axis("off")
 
-col_labels = ["JSON Field", "SQL Column", "Score", "Confidence", "Ambiguous", "Reasoning"]
-n_cols = len(col_labels)
+col_labels = ["JSON Field","SQL Column","Conf","Level","Ambiguous","Review","Reasoning"]
+n_cols     = len(col_labels)
 
-# Compute x positions from cumulative widths
-x_starts = []
-_x = 0.0
-for w in col_widths:
-    x_starts.append(_x)
-    _x += w
-total_w = _x
+total_w  = sum(col_widths)
+x_starts = [sum(col_widths[:j]) / total_w for j in range(n_cols)]
+w        = [cw / total_w for cw in col_widths]
 
-# Title
-ax.text(total_w / 2, fig_height - 0.25, "AI SCHEMA MAPPING REPORT",
-        color=TEXT_PRI, fontsize=11, fontweight="bold", ha="center", va="top",
-        fontfamily="monospace")
+header_y = 1.0 - 0.3 / fig_height
 
 # Header row
-header_y = fig_height - 0.75
-for j, (label, xs, w) in enumerate(zip(col_labels, x_starts, col_widths)):
-    ax.add_patch(mpatches.FancyBboxPatch(
-        (xs, header_y - 0.22), w - 0.06, 0.38,
-        boxstyle="round,pad=0.02", facecolor=LAVENDER, edgecolor="none", zorder=2
-    ))
-    ax.text(xs + 0.06, header_y, label,
-            color=BG, fontsize=7.5, fontweight="bold", va="center", fontfamily="monospace")
+for j, label in enumerate(col_labels):
+    xs = x_starts[j] + w[j] / 2
+    ax.text(xs, header_y, label,
+            transform=ax.transAxes,
+            ha="center", va="center",
+            fontsize=9, fontweight="bold",
+            color=BLUE, fontfamily="monospace")
 
-# Data rows
-for i, (_, row) in enumerate(display_df.iterrows()):
-    row_y = header_y - 0.52 * (i + 1)
-    row_bg = "#26262A" if i % 2 == 0 else "#222226"
+# Divider line under header
+ax.plot([0, 1], [header_y - 0.025, header_y - 0.025],
+        color=TEXT_SEC, linewidth=0.6, transform=ax.transAxes)
 
-    ax.add_patch(mpatches.FancyBboxPatch(
-        (0, row_y - 0.22), total_w - 0.06, 0.38,
-        boxstyle="round,pad=0.02", facecolor=row_bg, edgecolor="none", zorder=1
-    ))
+row_h = 0.52 / fig_height
+
+for i, (_, data_row) in enumerate(display_df.iterrows()):
+    row_y   = header_y - 0.06 - i * row_h - row_h / 2
+    row_bg  = "#26262A" if i % 2 == 0 else BG
+
+    rect = mpatches.FancyBboxPatch(
+        (0.0, row_y - row_h * 0.45), 1.0, row_h * 0.90,
+        boxstyle="square,pad=0", linewidth=0,
+        facecolor=row_bg, transform=ax.transAxes, clip_on=False
+    )
+    ax.add_patch(rect)
 
     vals = [
-        row["JSON_FIELD"], row["SQL_COLUMN"], row["RAW_SCORE"],
-        row["CONFIDENCE"], row["AMBIGUOUS"], row["REASONING"]
+        data_row["JSON Field"],
+        data_row["SQL Column"],
+        data_row["Confidence"],
+        data_row["Confidence Label"],
+        data_row["Ambiguous"],
+        data_row["Analyst Review"],
+        data_row["Reasoning"],
     ]
-    for j, (val, xs, w) in enumerate(zip(vals, x_starts, col_widths)):
-        text_color = TEXT_PRI
-        if j == 3:   # Confidence
-            text_color = conf_color.get(str(val), TEXT_PRI)
-        elif j == 4:  # Ambiguous
-            text_color = ambig_color.get(str(val), TEXT_PRI)
 
-        # Truncate reasoning for display
-        disp_val = str(val)
-        if j == 5 and len(disp_val) > 68:
-            disp_val = disp_val[:65] + "…"
+    for j, val in enumerate(vals):
+        xs = x_starts[j] + w[j] / 2
+        if j == 3:
+            text_color = conf_color(val)
+        elif j == 4:
+            text_color = CORAL if "⚠" in str(val) else GREEN
+        elif j == 5:
+            text_color = ORANGE if "Required" in str(val) else TEXT_SEC
+        elif j in (0, 1):
+            text_color = TEXT_PRI
+        else:
+            text_color = TEXT_SEC
 
-        ax.text(xs + 0.06, row_y, disp_val,
-                color=text_color, fontsize=6.5, va="center",
-                fontfamily="monospace", clip_on=True)
+        ax.text(xs, row_y, str(val),
+                transform=ax.transAxes,
+                ha="center" if j not in (0, 1, 6) else "left",
+                va="center",
+                fontsize=8,
+                color=text_color,
+                fontfamily="monospace")
 
 # Legend
-legend_y = row_y - 0.52
-for label, color in [("High confidence", GREEN), ("Medium confidence", ORANGE),
-                     ("Low / Ambiguous", CORAL)]:
-    ax.add_patch(mpatches.Circle((x_starts[0] + 0.08, legend_y), 0.07,
-                                  color=color, zorder=3))
-    ax.text(x_starts[0] + 0.22, legend_y, label,
-            color=TEXT_SEC, fontsize=6, va="center", fontfamily="monospace")
-    x_starts[0] += 1.6
+legend_y = 0.015
+legend_items = [
+    (GREEN, "High confidence — Auto-approved"),
+    (ORANGE, "Medium confidence — Analyst review"),
+    (CORAL, "Low / Ambiguous — Analyst review"),
+]
+lx = 0.01
+for color, label in legend_items:
+    patch = mpatches.Patch(facecolor=color, label=label)
+    ax.text(lx, legend_y, "■", transform=ax.transAxes, fontsize=10, color=color, va="center")
+    ax.text(lx + 0.025, legend_y, label, transform=ax.transAxes, fontsize=7.5, color=TEXT_SEC, va="center")
+    lx += 0.32
 
-ax.set_xlim(0, total_w)
-ax.set_ylim(legend_y - 0.4, fig_height)
-plt.tight_layout(pad=0.1)
+ax.set_title("AI Schema Mapping Report — Vendor → Enterprise SQL",
+             fontsize=11, fontweight="bold", color=TEXT_PRI, pad=10,
+             fontfamily="monospace")
+
+plt.tight_layout(pad=0.3)
 plt.close('all')
 
-print(f"\nMapping report rendered: {len(approved_map)} auto-approved, {len(pending_map)} pending review.")
+print(f"Approved field_map ({len(approved_map)} fields):")
+for k, v in approved_map.items():
+    print(f"  {k:<26} →  {v}")
+if pending_map:
+    print(f"\nPending analyst review ({len(pending_map)} fields):")
+    for k, v in pending_map.items():
+        print(f"  {k:<26} →  {v}  ⚠")

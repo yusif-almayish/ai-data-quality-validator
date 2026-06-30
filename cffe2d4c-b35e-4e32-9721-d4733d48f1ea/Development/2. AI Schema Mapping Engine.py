@@ -1,194 +1,164 @@
-
-"""
-AI Schema Mapping Engine
-─────────────────────────────────────────────────────────────────────────────
-Simulates an LLM-style field mapping agent using:
-  • Token overlap scoring  (fuzzy name similarity)
-  • Semantic synonym tables (domain knowledge)
-  • Type-compatibility signals
-  • Confidence calibration with ambiguity flagging
-
-This approach keeps all data internal — no external API call required.
-"""
-
 import re
 import pandas as pd
 from difflib import SequenceMatcher
 
-# ── Synonym / semantic knowledge base ────────────────────────────────────────
+# ── Inputs from upstream ─────────────────────────────────────────
+# vendor_fields, sql_schema inherited from Block 1
+
+# ── Semantic synonym table ───────────────────────────────────────
 SYNONYMS = {
-    "LOAN_ID": [
-        "loannumber", "loanid", "loan_num", "loan_no", "accountnumber",
-        "accountid", "loanref", "loanreference"
-    ],
-    "BORROWER_NAME": [
-        "borrowername", "borrower", "clientname", "customername",
-        "applicantname", "fullname", "name"
-    ],
-    "CURRENT_UPB": [
-        "principalbalance", "upb", "currentbalance", "outstandingbalance",
-        "balance", "currentupb", "principal", "loanbalance"
-    ],
-    "INTEREST_RATE": [
-        "interestrate", "rate", "couponrate", "noteratepercent",
-        "intrate", "annualrate"
-    ],
-    "LOAN_STATUS": [
-        "loanstatus", "status", "loancondition", "loanstate",
-        "delinquencystatus"
-    ],
-    "ORIGINATION_DATE": [
-        "origdate", "originationdate", "loanorigdate", "dateoriginated",
-        "fundingdate", "opendate", "startdate"
-    ],
-    "NEXT_PAYMENT_DATE": [
-        "nextpaymentdue", "nextpaymentdate", "nextduedate", "duedatenext",
-        "schedulednextpayment"
-    ],
-    "PROPERTY_STATE": [
-        "propertystate", "state", "propstate", "collateralstate",
-        "stateabbr"
-    ],
-    "SERVICER": [
-        "servicername", "servicer", "servicingcompany", "servicingentity",
-        "loanservicer"
-    ],
-    "CREDIT_SCORE": [
-        "ficoscore", "creditscore", "fico", "creditrating",
-        "borrowercreditscore", "vantagescore"
-    ],
+    # loanNumber → LOAN_ID
+    "loannumber":   "LOAN_ID",
+    "loanid":       "LOAN_ID",
+    "loan_no":      "LOAN_ID",
+    "loanno":       "LOAN_ID",
+
+    # borrowerName → BORROWER_NAME
+    "borrowername": "BORROWER_NAME",
+    "borrower":     "BORROWER_NAME",
+    "clientname":   "BORROWER_NAME",
+    "customername": "BORROWER_NAME",
+
+    # principalBalance → CURRENT_UPB
+    "principalbalance": "CURRENT_UPB",
+    "upb":              "CURRENT_UPB",
+    "currentbalance":   "CURRENT_UPB",
+    "outstandingbalance":"CURRENT_UPB",
+    "balance":          "CURRENT_UPB",
+
+    # interestRate → INTEREST_RATE
+    "interestrate": "INTEREST_RATE",
+    "rate":         "INTEREST_RATE",
+    "couponrate":   "INTEREST_RATE",
+    "noterate":     "INTEREST_RATE",
+
+    # loanStatus → LOAN_STATUS
+    "loanstatus":   "LOAN_STATUS",
+    "status":       "LOAN_STATUS",
+    "loanstate":    "LOAN_STATUS",
+
+    # origDate → ORIGINATION_DATE
+    "origdate":         "ORIGINATION_DATE",
+    "originationdate":  "ORIGINATION_DATE",
+    "fundingdate":      "ORIGINATION_DATE",
+    "closedate":        "ORIGINATION_DATE",
+    "loandate":         "ORIGINATION_DATE",
+
+    # nextPaymentDue → NEXT_PAYMENT_DATE
+    "nextpaymentdue":   "NEXT_PAYMENT_DATE",
+    "nextpaymentdate":  "NEXT_PAYMENT_DATE",
+    "nextduedate":      "NEXT_PAYMENT_DATE",
+    "paymentduedate":   "NEXT_PAYMENT_DATE",
+
+    # propertyState → PROPERTY_STATE
+    "propertystate":    "PROPERTY_STATE",
+    "state":            "PROPERTY_STATE",
+    "propstate":        "PROPERTY_STATE",
+
+    # servicerName → SERVICER
+    "servicername": "SERVICER",
+    "servicer":     "SERVICER",
+    "servicingco":  "SERVICER",
+    "loanservicer": "SERVICER",
+
+    # ficoScore → CREDIT_SCORE
+    "ficoscore":    "CREDIT_SCORE",
+    "fico":         "CREDIT_SCORE",
+    "creditscore":  "CREDIT_SCORE",
+    "creditrating": "CREDIT_SCORE",
 }
 
-# ── Type-compatibility hints ──────────────────────────────────────────────────
+# Type-hint signals: if vendor field name contains keyword → prefer sql col
 TYPE_HINTS = {
-    "BIGINT":       ["number", "id", "num", "code", "count"],
-    "DECIMAL":      ["balance", "rate", "amount", "price", "value", "upb"],
-    "VARCHAR":      ["name", "status", "servicer", "state", "text", "description"],
-    "DATE":         ["date", "due", "orig", "payment"],
-    "INT":          ["score", "fico", "credit", "rating", "age"],
-    "CHAR":         ["state", "code", "abbr"],
+    "date":    ["ORIGINATION_DATE","NEXT_PAYMENT_DATE"],
+    "rate":    ["INTEREST_RATE"],
+    "balance": ["CURRENT_UPB"],
+    "score":   ["CREDIT_SCORE"],
+    "state":   ["PROPERTY_STATE"],
+    "status":  ["LOAN_STATUS"],
 }
 
+sql_cols = [c for c in sql_schema.keys()]
 
-def _normalise(s: str) -> str:
-    """Lowercase, strip non-alpha."""
-    return re.sub(r"[^a-z0-9]", "", s.lower())
+def token_similarity(a: str, b: str) -> float:
+    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
-
-def _token_similarity(a: str, b: str) -> float:
-    return SequenceMatcher(None, _normalise(a), _normalise(b)).ratio()
-
-
-def _type_signal(json_field: str, sql_type: str) -> float:
-    """Bonus score if field name tokens align with SQL type group."""
-    base_type = sql_type.split("(")[0].upper()
-    hints = TYPE_HINTS.get(base_type, [])
-    norm = _normalise(json_field)
-    return 0.1 if any(h in norm for h in hints) else 0.0
-
-
-def score_mapping(json_field: str, sql_col: str, sql_type: str) -> float:
-    """Composite similarity score [0, 1]."""
-    norm_field = _normalise(json_field)
-    # Exact synonym match → high base
-    synonyms = [_normalise(s) for s in SYNONYMS.get(sql_col, [])]
-    if norm_field in synonyms:
-        return min(1.0, 0.85 + _type_signal(json_field, sql_type))
-    # Token similarity
-    token_score = max(
-        _token_similarity(json_field, sql_col),
-        max((_token_similarity(json_field, s) for s in SYNONYMS.get(sql_col, [])), default=0),
-    )
-    return min(1.0, token_score + _type_signal(json_field, sql_type))
-
-
-def confidence_label(score: float) -> str:
-    if score >= 0.80:
-        return "High"
-    if score >= 0.55:
-        return "Medium"
-    return "Low"
-
-
-def is_ambiguous(score: float, all_scores: list[float]) -> bool:
-    """Ambiguous if best score < 0.80 OR two candidates are within 0.15 of each other."""
-    sorted_scores = sorted(all_scores, reverse=True)
-    if score < 0.80:
-        return True
-    if len(sorted_scores) > 1 and (sorted_scores[0] - sorted_scores[1]) < 0.15:
-        return True
-    return False
-
-
-# ── Run mapping for every vendor field ───────────────────────────────────────
 mapping_rows = []
 
-for json_field in vendor_fields:
-    scores = {
-        sql_col: score_mapping(json_field, sql_col, meta["sql_type"])
-        for sql_col, meta in sql_schema.items()
-    }
-    best_col = max(scores, key=scores.get)
-    best_score = scores[best_col]
-    all_score_vals = list(scores.values())
+for json_field in [f for f in vendor_fields if f != "ingestion_date"]:
+    norm = re.sub(r"[_\s]", "", json_field).lower()
+    synonyms_norm = {re.sub(r"[_\s]","","").lower(): v for k,v in SYNONYMS.items() for _ in [k]}
+    synonyms_norm = {re.sub(r"[_\s]","",k).lower(): v for k,v in SYNONYMS.items()}
 
-    ambig = is_ambiguous(best_score, all_score_vals)
-    conf = confidence_label(best_score)
-
-    # Build human-readable reasoning
-    norm = _normalise(json_field)
-    synonyms_norm = [_normalise(s) for s in SYNONYMS.get(best_col, [])]
+    # 1. Direct synonym lookup (highest priority)
     if norm in synonyms_norm:
-        reason = f"'{json_field}' is a known synonym for {best_col}; type conversion may be required."
-    elif best_score >= 0.80:
-        reason = f"Strong token overlap between '{json_field}' and '{best_col}'; minor format transform expected."
-    elif best_score >= 0.55:
-        reason = f"Partial name similarity to '{best_col}'; recommend analyst confirmation before production use."
+        best_col   = synonyms_norm[norm]
+        best_score = 0.97
+        reason     = "Direct semantic synonym match"
     else:
-        reason = f"Weak signal — no strong match found; manual mapping required."
+        # 2. Token similarity against all SQL column names
+        scores = {}
+        for col in sql_cols:
+            col_norm = re.sub(r"[_\s]","",col).lower()
+            sim = token_similarity(norm, col_norm)
+            # Apply type-hint bonus
+            for keyword, preferred_cols in TYPE_HINTS.items():
+                if keyword in norm and col in preferred_cols:
+                    sim = min(1.0, sim + 0.12)
+            scores[col] = sim
+
+        sorted_cols = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        best_col, best_score = sorted_cols[0]
+        second_score = sorted_cols[1][1] if len(sorted_cols) > 1 else 0
+
+        # Ambiguity: top two candidates within 0.15 of each other
+        gap = best_score - second_score
+        if gap < 0.15:
+            reason = f"Similarity match ({best_score:.2f}); ambiguous — gap to runner-up only {gap:.2f}"
+        else:
+            reason = f"Token similarity match (score {best_score:.2f})"
+
+    all_score_vals = list(scores.values()) if best_score < 0.97 else []
+    ambig = (best_score < 0.97) and (len(all_score_vals) >= 2) and (
+        (sorted(all_score_vals, reverse=True)[0] - sorted(all_score_vals, reverse=True)[1]) < 0.15
+    )
+
+    if best_score >= 0.90:
+        conf, conf_label = best_score, "High"
+    elif best_score >= 0.75:
+        conf, conf_label = best_score, "Medium"
+    else:
+        conf, conf_label = best_score, "Low"
 
     mapping_rows.append({
-        "JSON_FIELD":   json_field,
-        "SQL_COLUMN":   best_col if best_score >= 0.35 else "NO_MATCH",
-        "RAW_SCORE":    round(best_score, 3),
-        "CONFIDENCE":   conf,
-        "AMBIGUOUS":    "YES" if ambig else "NO",
-        "REASONING":    reason,
+        "JSON Field":       json_field,
+        "SQL Column":       best_col,
+        "Confidence":       round(conf, 2),
+        "Confidence Label": conf_label,
+        "Ambiguous":        ambig or conf_label in ("Medium","Low"),
+        "Reasoning":        reason,
+        "Analyst Review":   "Required" if (ambig or conf_label in ("Medium","Low")) else "Not required",
     })
 
 ai_mapping_df = pd.DataFrame(mapping_rows)
 
-# ── Identify unmapped SQL columns ─────────────────────────────────────────────
-mapped_sql_cols = set(ai_mapping_df["SQL_COLUMN"].tolist())
-missing_sql_cols = [col for col in sql_schema if col not in mapped_sql_cols]
+# Summarise mapped vs missing SQL columns
+mapped_sql_cols   = set(ai_mapping_df["SQL Column"].tolist())
+missing_sql_cols  = [c for c in sql_cols if c not in mapped_sql_cols]
 
-# ── Print AI Mapping Report ───────────────────────────────────────────────────
+n_high   = (ai_mapping_df["Confidence Label"] == "High").sum()
+n_medium = (ai_mapping_df["Confidence Label"] == "Medium").sum()
+n_ambig  = ai_mapping_df["Ambiguous"].sum()
+
 print("=" * 90)
 print("  AI SCHEMA MAPPING REPORT")
 print("=" * 90)
-_hdr = f"  {'JSON Field':<22} {'SQL Column':<22} {'Score':>6}  {'Conf':<8} {'Ambig':<7} Reasoning"
-print(_hdr)
-print("  " + "─" * 86)
+print(f"  {'JSON Field':<26} {'SQL Column':<22} {'Conf':>5}  {'Level':<8} {'Review'}")
+print("-" * 90)
 for _, row in ai_mapping_df.iterrows():
-    flag = "⚠" if row["AMBIGUOUS"] == "YES" else " "
-    print(
-        f"  {flag}{row['JSON_FIELD']:<21} {row['SQL_COLUMN']:<22} "
-        f"{row['RAW_SCORE']:>6.3f}  {row['CONFIDENCE']:<8} {row['AMBIGUOUS']:<7} "
-        f"{row['REASONING']}"
-    )
-
-print(f"\n  ⚠  = Flagged for analyst review")
-
-if missing_sql_cols:
-    print(f"\n  SQL COLUMNS WITH NO VENDOR MAPPING:")
-    for c in missing_sql_cols:
-        print(f"    • {c}  [{sql_schema[c]['sql_type']}]  nullable={sql_schema[c]['nullable']}")
-
-# Summary stats
-n_high   = (ai_mapping_df["CONFIDENCE"] == "High").sum()
-n_medium = (ai_mapping_df["CONFIDENCE"] == "Medium").sum()
-n_ambig  = (ai_mapping_df["AMBIGUOUS"] == "YES").sum()
-print(f"\n  Mappings: {len(ai_mapping_df)} total  |  "
-      f"High={n_high}  Medium={n_medium}  "
-      f"Low={(ai_mapping_df['CONFIDENCE']=='Low').sum()}  |  "
-      f"Ambiguous={n_ambig}")
+    flag = "⚠" if row["Ambiguous"] else "✓"
+    print(f"  {flag} {row['JSON Field']:<24} {row['SQL Column']:<22} {row['Confidence']:>5.2f}  {row['Confidence Label']:<8} {row['Analyst Review']}")
+print("=" * 90)
+print(f"  High confidence : {n_high}    Medium : {n_medium}    Ambiguous : {n_ambig}")
+print(f"  Missing SQL cols: {missing_sql_cols if missing_sql_cols else 'None'}")
+print("=" * 90)
